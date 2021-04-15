@@ -1,6 +1,3 @@
-import { Board, Pin } from "johnny-five"
-
-enum Protocol {I2C, SPI}
 enum TransferType {Command, Data}
 type Direction = 'left' | 'left diagonal' | 'right' | 'right diagonal'
 type Black = 0x00
@@ -33,37 +30,17 @@ interface ScreenConfig {
   coloffset: number
 }
 
-interface SPIConfig {
-  dcPin: number
-  ssPin: number
-  rstPin: number
-  clkPin: number
-  mosiPin: number
-}
-
-export = class Oled {
+class Oled {
   // Configuration
   private readonly HEIGHT: number
   private readonly WIDTH: number
   private readonly ADDRESS: number
-  private readonly PROTOCOL: Protocol
-  private readonly MICROVIEW: boolean
   private readonly SECONDARYPIN: number
   private readonly RESETPIN: number
   private readonly DATA: number
   private readonly COMMAND: number
 
-  private readonly board: Board
-  private readonly five: any
-
   private readonly screenConfig: ScreenConfig
-  private readonly SPIconfig: SPIConfig
-
-  private dcPin: Pin
-  private ssPin: Pin
-  private clkPin: Pin
-  private mosiPin: Pin
-  private rstPin: Pin
 
   // Commands
   private static readonly DISPLAY_OFF: number = 0xAE
@@ -101,12 +78,15 @@ export = class Oled {
   private cursor_y: number
   private dirtyBytes: number[]
 
-  public constructor (board: Board, five: any, opts: OledOptions) {
+  // public constructor (board: Board, five: any, opts: OledOptions) {
+    public constructor(
+      private i2cWrite: (address: number, dataArray: number[]) => void,
+      private i2cRead: (address: number) => number,
+      opts: OledOptions
+    ) {
     this.HEIGHT = opts.height || 32
     this.WIDTH = opts.width || 128
     this.ADDRESS = opts.address || 0x3C
-    this.PROTOCOL = (opts.address) ? Protocol.I2C : Protocol.SPI
-    this.MICROVIEW = opts.microview || false
     this.SECONDARYPIN = opts.secondaryPin || 12
     this.RESETPIN = opts.resetPin || 4
     this.DATA = opts.data || 0x40
@@ -120,10 +100,6 @@ export = class Oled {
     this.buffer.fill(0x00)
 
     this.dirtyBytes = []
-
-    // this is necessary as we're not natively sitting within johnny-five lib
-    this.board = board
-    this.five = five
 
     const config: { [screenSize: string]: ScreenConfig; } = {
       '128x32': {
@@ -140,44 +116,11 @@ export = class Oled {
         'multiplex': 0x0F,
         'compins': 0x2,
         'coloffset': 0
-      },
-      // this is blended microview / normal 64 x 48, currently wip
-      '64x48': {
-        'multiplex': 0x2F,
-        'compins': 0x12,
-        'coloffset': (this.MICROVIEW) ? 32 : 0
-      }
-    }
-
-    // microview is wip
-    if (this.MICROVIEW) {
-      // microview spi pins
-      this.SPIconfig = {
-        'dcPin': 8,
-        'ssPin': 10,
-        'rstPin': 7,
-        'clkPin': 13,
-        'mosiPin': 11
-      }
-    } else if (this.PROTOCOL === Protocol.SPI) {
-      // generic spi pins
-      this.SPIconfig = {
-        'dcPin': 11,
-        'ssPin': this.SECONDARYPIN,
-        'rstPin': 13,
-        'clkPin': 10,
-        'mosiPin': 9
       }
     }
 
     const screenSize = `${this.WIDTH}x${this.HEIGHT}`
     this.screenConfig = config[screenSize]
-
-    if (this.PROTOCOL === Protocol.I2C) {
-      this._setUpI2C(opts)
-    } else {
-      this._setUpSPI()
-    }
 
     this._initialise()
   }
@@ -209,31 +152,6 @@ export = class Oled {
     }
   }
 
-  private _setUpSPI (): void {
-    // set up spi pins
-    this.dcPin = new this.five.Pin(this.SPIconfig.dcPin)
-    this.ssPin = new this.five.Pin(this.SPIconfig.ssPin)
-    this.clkPin = new this.five.Pin(this.SPIconfig.clkPin)
-    this.mosiPin = new this.five.Pin(this.SPIconfig.mosiPin)
-    // reset won't be used as it causes a bunch of default initialisations
-    this.rstPin = new this.five.Pin(this.SPIconfig.rstPin)
-
-    // get the screen out of default mode
-    this.rstPin.low()
-    this.rstPin.high()
-    // Set SS to high so a connected chip will be "deselected" by default
-    this.ssPin.high()
-  }
-
-  private _setUpI2C (opts: OledOptions): void {
-    // enable i2C in firmata
-    this.board.io.i2cConfig(opts)
-    // set up reset pin and hold high
-    this.rstPin = new this.five.Pin(this.RESETPIN)
-    this.rstPin.low()
-    this.rstPin.high()
-  }
-
   // writes both commands and data buffers to this device
   private _transfer (type: TransferType, val: number): void {
     let control: number
@@ -245,59 +163,20 @@ export = class Oled {
     } else {
       return
     }
-
-    if (this.PROTOCOL === Protocol.I2C) {
-      // send control and actual val
-      this.board.io.i2cWrite(this.ADDRESS, [control, val])
-    } else {
-      // send val via SPI, no control byte
-      this._writeSPI(val, type)
-    }
-  }
-
-  private _writeSPI (byte: number, mode: TransferType): void {
-    // set dc to low if command byte, high if data byte
-    if (mode === TransferType.Command) {
-      this.dcPin.low()
-    } else {
-      this.dcPin.high()
-    }
-
-    // select the device as secondary
-    this.ssPin.low()
-
-    for (let bit = 7; bit >= 0; bit--) {
-      // pull clock low
-      this.clkPin.low()
-
-      // shift out a bit for mosi
-      if (byte & (1 << bit)) {
-        this.mosiPin.high()
-      } else {
-        this.mosiPin.low()
-      }
-
-      // pull clock high to collect bit
-      this.clkPin.high()
-    }
-
-    // turn off ss so other devices can use SPI
-    // don't be an SPI hogging jerk basically
-    this.ssPin.high()
+      
+    this.i2cWrite(this.ADDRESS, [control, val]);
   }
 
   // read a byte from the oled
   private _readI2C (fn: (data: number) => void): void {
-    this.board.io.i2cReadOnce(this.ADDRESS, 1, (data: number) => {
-      fn(data)
-    })
+    fn(this.i2cRead(this.ADDRESS))
   }
 
   // sometimes the oled gets a bit busy with lots of bytes.
   // Read the response byte to see if this is the case
   private _waitUntilReady (callback: () => void): void {
     const oled = this
-
+1
     const tick = (callback: () => void) => {
       oled._readI2C((byte: number) => {
         // read the busy byte in the response
@@ -312,11 +191,7 @@ export = class Oled {
       })
     }
 
-    if (this.PROTOCOL === Protocol.I2C) {
-      setTimeout(() => { tick(callback) }, 0)
-    } else {
-      callback()
-    }
+    setTimeout(() => { tick(callback) }, 0)
   }
 
   // set starting position of a text string on the oled
@@ -823,3 +698,5 @@ export = class Oled {
   }
 }
 
+
+export = Oled;
