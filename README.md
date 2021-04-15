@@ -1,15 +1,20 @@
-![‘npm version’](http://img.shields.io/npm/v/oled-js.svg?style=flat) ![‘downloads over month’](http://img.shields.io/npm/dm/oled-js.svg?style=flat)
-
 oled js
 ========================
 
-![oled-cat](http://f.cl.ly/items/2G041X2C1o2A1n2D3S18/cat-oled.png)
 
 ## What is this?
 
-This repo is a library compatible with Rick Waldron's [johnny-five](https://github.com/rwaldron/johnny-five) project. It adds support for I2C/SPI compatible monochrome OLED screens. Works with 128 x 32, 128 x 64 and 96 x 16 sized screens, of the SSD1306 OLED/PLED Controller (read the [datasheet here](http://www.adafruit.com/datasheets/SSD1306.pdf)).
+This repo is a fork of [noopkat's oled-js](https://github.com/noopkat/oled-js) library with direct dependencies on Johnny-Five removed. Instead of passing a Johnny-Five board and the Johnny-Five instance into the constructor, the i2cWrite and i2cRead functions can be passed in, IoC style.
 
-Got a [MicroView](https://www.sparkfun.com/products/12923) from GeekAmmo/SparkFun? That'll work too.
+*Could probably just make an interface for the parameters to make it a bit cleaner*
+
+See noopkat's original repo for better details.
+
+
+The rest of this readme is a copy of the original readme, other than an updated `TypeScript` example using `rpio` and removal of some SPI details, as it is no longer supported.
+
+---
+
 
 Interested in the nerdy bits going on behind the scenes? [Read my blog post about how OLED screens work](http://meow.noopkat.com/oled-js/)!
 
@@ -38,97 +43,39 @@ If you'd like to run the demo:
 3. Replace width, height, and other values in the options with your own in tests/demoTime.js
 4. `node tests/demoTime.js`
 
-### I2C example
+### I2C example using rpio
 
-```javascript
-const five = require('johnny-five');
-const Oled = require('oled-js');
+```typescript
+import rpio from 'rpio';
 
-const board = new five.Board();
+rpio.i2cBegin();
+rpio.i2cSetBaudRate(100000);
 
-board.on('ready', () => {
-  console.log('Connected to Arduino, ready.');
-
-  const opts = {
-    width: 128,
+const testOled = new Oled(
+  (address, array) => {
+    rpio.i2cSetSlaveAddress(address);
+    rpio.i2cWrite(Buffer.from(array));
+  },
+  (address) => {
+    rpio.i2cSetSlaveAddress(address);
+    const readBuf = Buffer.alloc(1);
+    rpio.i2cRead(readBuf);
+    return readBuf[0];
+  }, {
+    address: 0x3c,
     height: 64,
-    address: 0x3D
-  };
+    width: 128
+  }
+);
 
-  const oled = new Oled(board, five, opts);
-  // do cool oled things here
-});
-
+testOled.drawCircle(30, 10, 5, 1);
 ```
 
 ### Wait, how do I find out the I2C address of my OLED screen?
 Yeah this sounds like a nightmare, but it's pretty simple! Before uploading standard firmata to your Arduino, upload the [following sketch](http://playground.arduino.cc/Main/I2cScanner) from the Arduino Playground called 'I2C scanner'. Does what it says on the box. Open up your serial monitor, and you'll see your device address pop up there. Make a note of it, then re-upload standard firmata to your Arduino again.
 
-## SPI screens
 
-**IMPORTANT NOTE: Using SPI will make your screen update and draw VERY slow. Manual hardware SPI over USB is the only way currently to do this within Johnny-Five, which is not optimized for the normal speed you can expect from SPI in general. Sorry about that. [Here is a video I took to show this](https://www.youtube.com/watch?v=wHCxlYx2bZY).**
-
-Hook up SPI compatible oled to the Arduino. If using an Arduino Uno, pins are as follows:
-
-+ Data/MOSI to pin D9
-+ CLK to pin D10
-+ D/C to pin D11
-+ RST to pin D13
-+ CS/SS to pin 12 (you can change this one if you really want to)
-
-Fritzing diagram coming soon.
-
-#### SPI example
-
-```javascript
-const five = require('johnny-five');
-const Oled = require('oled-js');
-
-const board = new five.Board();
-
-board.on('ready', () => {
-  console.log('Connected to Arduino, ready.');
-
-  const opts = {
-    width: 128,
-    height: 64,
-    secondaryPin: 12
-  };
-
-  const oled = new Oled(board, five, opts);
-  // do cool oled things here
-});
-
-```
-
-## MicroView
-
-**MicroView uses SPI, so please see the note about drawing speed in the SPI section above.**
-
-This one is pretty simple - use the USB programmer that should have come with your MicroView. Insert the MicroView's header pins into the slots on the USB programmer. Plug it in to your nearest USB port, and you're done! No pin mappings, no sweat.
-
-### Microview example
-
-```javascript
-const five = require('johnny-five');
-const Oled = require('oled-js');
-
-const board = new five.Board();
-
-board.on('ready', () => {
-  console.log('Connected to Arduino, ready.');
-
-  const opts = {
-    width: 64,
-    height: 48,
-    microview: true
-  };
-
-  const oled = new Oled(board, five, opts);
-  // do cool oled things here
-});
-
-```
+SPI and MicroView support has been removed, as I don't use this in my projects.
 
 ## Available methods
 
